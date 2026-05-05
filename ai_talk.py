@@ -1,0 +1,141 @@
+import os
+import time
+import json
+import requests
+import winsound
+import glob
+import threading
+import queue
+from datetime import datetime
+from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# --- 設定 ---
+XAI_API_KEY = os.getenv("XAI_API_KEY")
+XAI_BASE_URL = "https://api.x.ai/v1"
+XAI_MODEL = "grok-4-1-fast-non-reasoning"
+TSUMIKI_URL = "http://192.168.1.220:8080/v1/chat/completions"
+VOICEVOX_URL = "http://localhost:50021"
+
+# --- セッションの固定（爆速化の基本よ） ---
+session = requests.Session()
+
+# --- 音声処理用キュー ---
+audio_queue = queue.Queue()
+
+def audio_worker():
+    """
+    音声合成と再生を裏側で行うワーカー。
+    メインスレッド（文字表示）を止めずに、裏でボイボを回し続けるわ。
+    """
+    while True:
+        item = audio_queue.get()
+        if item is None: break
+        
+        text, style_id = item
+        try:
+            # 1. クエリ作成
+            query_res = session.post(f"{VOICEVOX_URL}/audio_query", params={'text': text, 'speaker': style_id}, timeout=10)
+            query_data = query_res.json()
+            query_data.update({'speedScale': 1.25, 'volumeScale': 1.1, 'pitchScale': 0.08})
+
+            # 2. 合成
+            synthesis_res = session.post(f"{VOICEVOX_URL}/synthesis", params={'speaker': style_id}, data=json.dumps(query_data), timeout=30)
+            
+            # 再生用のテンポラリファイル
+            filename = f"temp_voice_{int(time.time()*1000)}.wav"
+            with open(filename, "wb") as f:
+                f.write(synthesis_res.content)
+            
+            # 順番を守るために、ワーカー内では同期再生（SND_FILENAME）にするわ
+            winsound.PlaySound(filename, winsound.SND_FILENAME)
+            
+            try: os.remove(filename)
+            except: pass
+        except Exception as e:
+            print(f"\n⚠️ 音声ワーカーエラー: {e}")
+        
+        audio_queue.task_done()
+
+# ワーカー起動
+threading.Thread(target=audio_worker, daemon=True).start()
+
+def load_file(filepath, default_text=""):
+    if not os.path.exists(filepath): return default_text
+    with open(filepath, "r", encoding="utf-8") as f: return f.read().strip()
+
+client = OpenAI(api_key=XAI_API_KEY, base_url=XAI_BASE_URL)
+
+def main():
+    # プロンプトの読み込み
+    llama_sys = load_file("system_prompt.txt", "あなたは生意気な少女AIです。")
+    grok_sys = load_file("grok_prompt.txt", "あなたはつみきの司令塔です。")
+
+    print("\n" + "="*40)
+    user_input = input("マスター: ")
+    if not user_input.strip(): return
+    
+    # 1. Grok分析 (xAI API)
+    print(f"📡 思考スキャン中...", end=" ", flush=True)
+    t_start = time.time()
+    
+    grok_res = client.chat.completions.create(
+        model=XAI_MODEL,
+        messages=[{"role": "system", "content": grok_sys}, {"role": "user", "content": user_input}],
+        response_format={ "type": "json_object" }
+    )
+    res_json = json.loads(grok_res.choices[0].message.content)
+    感情ID = res_json.get("style_id", 61)
+    ネタ = res_json.get("ネタ", "")
+    print(f"Done! (Style:{感情ID})")
+
+    # ★予測合成（ウォームアップ）: 
+    # Llamaが考え始める前に、Grokが生成した「ネタ」を使ってVOICEVOXに空リクエストを投げ、
+    # エンジンを「熱い」状態にしておくわ。
+    threading.Thread(target=lambda: session.get(f"{VOICEVOX_URL}/speakers"), daemon=True).start()
+
+    # 2. Llama変換 (ここから爆速ストリーミング)
+    print(f"💖 つみき: ", end="", flush=True)
+    
+    payload = {
+        "messages": [
+            {"role": "system", "content": llama_sys + "\n必ず15文字以内で区切れ。"},
+            {"role": "user", "content": ネタ}
+        ],
+        "stream": True
+    }
+    
+    try:
+        # サブPCのプロキシへ接続
+        with session.post(TSUMIKI_URL, json=payload, stream=True, timeout=(5, 60)) as r:
+            buffer = ""
+            for line in r.iter_lines():
+                if not line: continue
+                decoded = line.decode('utf-8').replace('data: ', '').strip()
+                if decoded == '[DONE]': break
+                try:
+                    chunk = json.loads(decoded)
+                    content = chunk['choices'][0]['delta'].get('content', '')
+                    if content:
+                        print(content, end="", flush=True)
+                        buffer += content
+                        # 句読点で区切ってキューに放り込む！
+                        if any(p in content for p in ["。", "！", "？", "!", "?", "、", "\n"]):
+                            audio_queue.put((buffer, 感情ID)) # キューに投げて、自分はすぐ次の文字へ
+                            buffer = ""
+                except: continue
+
+        # 最後に残ったバッファを処理
+        if buffer.strip(): audio_queue.put((buffer, 感情ID))
+    except Exception as e:
+        print(f"\n⚠️ Llama通信エラー: {e}")
+
+    print(f"\n⚡ 応答完了: {time.time() - t_start:.2f}秒")
+
+if __name__ == "__main__":
+    print(f"--- つみき v3.1 (究極パイプライン版) 起動 ---")
+    while True:
+        try: main()
+        except KeyboardInterrupt: break
