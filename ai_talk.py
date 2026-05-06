@@ -19,47 +19,32 @@ XAI_MODEL = "grok-4-1-fast-non-reasoning"
 TSUMIKI_URL = "http://192.168.1.220:8080/v1/chat/completions"
 VOICEVOX_URL = "http://localhost:50021"
 
-# --- セッションの固定（爆速化の基本） ---
+# --- セッションの固定 ---
 session = requests.Session()
 
 # --- 音声処理用キュー ---
 audio_queue = queue.Queue()
 
 def audio_worker():
-    """
-    音声合成と再生を裏側で行うワーカー。
-    メインスレッド（文字表示）を止めずに、裏でボイボを回し続ける。
-    """
     while True:
         item = audio_queue.get()
         if item is None: break
-        
         text, style_id = item
         try:
-            # 1. クエリ作成
             query_res = session.post(f"{VOICEVOX_URL}/audio_query", params={'text': text, 'speaker': style_id}, timeout=10)
             query_data = query_res.json()
             query_data.update({'speedScale': 1.25, 'volumeScale': 1.1, 'pitchScale': 0.08})
-
-            # 2. 合成
             synthesis_res = session.post(f"{VOICEVOX_URL}/synthesis", params={'speaker': style_id}, data=json.dumps(query_data), timeout=30)
-            
-            # 再生用のテンポラリファイル
             filename = f"temp_voice_{int(time.time()*1000)}.wav"
             with open(filename, "wb") as f:
                 f.write(synthesis_res.content)
-            
-            # 順番を守るために、ワーカー内では同期再生（SND_FILENAME）
             winsound.PlaySound(filename, winsound.SND_FILENAME)
-            
             try: os.remove(filename)
             except: pass
         except Exception as e:
             print(f"\n⚠️ 音声ワーカーエラー: {e}")
-        
         audio_queue.task_done()
 
-# ワーカー起動
 threading.Thread(target=audio_worker, daemon=True).start()
 
 def load_file(filepath, default_text=""):
@@ -69,7 +54,6 @@ def load_file(filepath, default_text=""):
 client = OpenAI(api_key=XAI_API_KEY, base_url=XAI_BASE_URL)
 
 def main():
-    # プロンプトの読み込み
     llama_sys = load_file("system_prompt.txt", "あなたは生意気な少女AIです。")
     grok_sys = load_file("grok_prompt.txt", "あなたはつみきの司令塔です。")
 
@@ -77,7 +61,7 @@ def main():
     user_input = input("マスター: ")
     if not user_input.strip(): return
     
-    # 1. Grok分析 (xAI API)
+    # 1. Grok分析
     print(f"📡 思考スキャン中...", end=" ", flush=True)
     t_start = time.time()
     
@@ -90,14 +74,9 @@ def main():
     感情ID = res_json.get("style_id", 61)
     ネタ = res_json.get("ネタ", "")
     print(f"Done! (Style:{感情ID})")
-
-    # --- 品質管理用: Grokの思考を可視化 ---
     print(f"🧠 Grokの思考(ネタ): {ネタ}")
 
-    # ウォームアップ
-    threading.Thread(target=lambda: session.get(f"{VOICEVOX_URL}/speakers"), daemon=True).start()
-
-    # 2. Llama変換 (爆速ストリーミング)
+    # 2. Llama変換
     print(f"💖 つみき: ", end="", flush=True)
     llama_output_full = ""
     
@@ -110,7 +89,6 @@ def main():
     }
     
     try:
-        # サブPCのプロキシへ接続
         with session.post(TSUMIKI_URL, json=payload, stream=True, timeout=(5, 60)) as r:
             buffer = ""
             for line in r.iter_lines():
@@ -124,30 +102,31 @@ def main():
                         print(content, end="", flush=True)
                         buffer += content
                         llama_output_full += content
-                        # 句読点で区切ってキューに放り込む
                         if any(p in content for p in ["。", "！", "？", "!", "?", "、", "\n"]):
                             audio_queue.put((buffer, 感情ID))
                             buffer = ""
                 except: continue
-
-        # 最後に残ったバッファを処理
         if buffer.strip(): audio_queue.put((buffer, 感情ID))
     except Exception as e:
         print(f"\n⚠️ Llama通信エラー: {e}")
 
-    # --- 品質管理用: 詳細な対話ログを記録 ---
-    with open("chat_log_detail.txt", "a", encoding="utf-8") as f:
+    # 応答時間の確定
+    response_time = time.time() - t_start
+
+    # --- 詳細ログを記録 (chat_log.txt) ---
+    with open("chat_log.txt", "a", encoding="utf-8") as f:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         f.write(f"[{timestamp}] ID:{感情ID}\n")
         f.write(f" Master: {user_input}\n")
         f.write(f" Grok(ネタ): {ネタ}\n")
         f.write(f" Tsumiki: {llama_output_full}\n")
+        f.write(f" ResponseTime: {response_time:.2f}s\n")
         f.write("-" * 40 + "\n")
 
-    print(f"\n⚡ 応答完了: {time.time() - t_start:.2f}秒")
+    print(f"\n⚡ 応答完了: {response_time:.2f}秒")
 
 if __name__ == "__main__":
-    print(f"--- つみき v3.2 (ログ強化モデル) 起動 ---")
+    print(f"--- つみき v3.3 (タイムログ実装版) 起動 ---")
     while True:
         try: main()
         except KeyboardInterrupt: break
