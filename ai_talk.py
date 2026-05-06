@@ -19,7 +19,7 @@ XAI_MODEL = "grok-4-1-fast-non-reasoning"
 TSUMIKI_URL = "http://192.168.1.220:8080/v1/chat/completions"
 VOICEVOX_URL = "http://localhost:50021"
 
-# --- セッションの固定（爆速化の基本よ） ---
+# --- セッションの固定（爆速化の基本） ---
 session = requests.Session()
 
 # --- 音声処理用キュー ---
@@ -28,7 +28,7 @@ audio_queue = queue.Queue()
 def audio_worker():
     """
     音声合成と再生を裏側で行うワーカー。
-    メインスレッド（文字表示）を止めずに、裏でボイボを回し続けるわ。
+    メインスレッド（文字表示）を止めずに、裏でボイボを回し続ける。
     """
     while True:
         item = audio_queue.get()
@@ -49,7 +49,7 @@ def audio_worker():
             with open(filename, "wb") as f:
                 f.write(synthesis_res.content)
             
-            # 順番を守るために、ワーカー内では同期再生（SND_FILENAME）にするわ
+            # 順番を守るために、ワーカー内では同期再生（SND_FILENAME）
             winsound.PlaySound(filename, winsound.SND_FILENAME)
             
             try: os.remove(filename)
@@ -91,17 +91,19 @@ def main():
     ネタ = res_json.get("ネタ", "")
     print(f"Done! (Style:{感情ID})")
 
-    # ★予測合成（ウォームアップ）: 
-    # Llamaが考え始める前に、Grokが生成した「ネタ」を使ってVOICEVOXに空リクエストを投げ、
-    # エンジンを「熱い」状態にしておくわ。
+    # --- 品質管理用: Grokの思考を可視化 ---
+    print(f"🧠 Grokの思考(ネタ): {ネタ}")
+
+    # ウォームアップ
     threading.Thread(target=lambda: session.get(f"{VOICEVOX_URL}/speakers"), daemon=True).start()
 
-    # 2. Llama変換 (ここから爆速ストリーミング)
+    # 2. Llama変換 (爆速ストリーミング)
     print(f"💖 つみき: ", end="", flush=True)
+    llama_output_full = ""
     
     payload = {
         "messages": [
-            {"role": "system", "content": llama_sys + "\n必ず15文字以内で区切れ。"},
+            {"role": "system", "content": llama_sys},
             {"role": "user", "content": ネタ}
         ],
         "stream": True
@@ -121,9 +123,10 @@ def main():
                     if content:
                         print(content, end="", flush=True)
                         buffer += content
-                        # 句読点で区切ってキューに放り込む！
+                        llama_output_full += content
+                        # 句読点で区切ってキューに放り込む
                         if any(p in content for p in ["。", "！", "？", "!", "?", "、", "\n"]):
-                            audio_queue.put((buffer, 感情ID)) # キューに投げて、自分はすぐ次の文字へ
+                            audio_queue.put((buffer, 感情ID))
                             buffer = ""
                 except: continue
 
@@ -132,10 +135,19 @@ def main():
     except Exception as e:
         print(f"\n⚠️ Llama通信エラー: {e}")
 
+    # --- 品質管理用: 詳細な対話ログを記録 ---
+    with open("chat_log_detail.txt", "a", encoding="utf-8") as f:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        f.write(f"[{timestamp}] ID:{感情ID}\n")
+        f.write(f" Master: {user_input}\n")
+        f.write(f" Grok(ネタ): {ネタ}\n")
+        f.write(f" Tsumiki: {llama_output_full}\n")
+        f.write("-" * 40 + "\n")
+
     print(f"\n⚡ 応答完了: {time.time() - t_start:.2f}秒")
 
 if __name__ == "__main__":
-    print(f"--- つみき v3.1 (究極パイプライン版) 起動 ---")
+    print(f"--- つみき v3.2 (ログ強化モデル) 起動 ---")
     while True:
         try: main()
         except KeyboardInterrupt: break
