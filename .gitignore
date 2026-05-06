@@ -1,17 +1,8 @@
-# 環境変数（絶対に公開しちゃダメよ！）
 .env
-
-# 音声ファイル（バックアップ不要：すべてのwavを除外）
 *.wav
-
-# LLMモデルファイル（巨大すぎてGitには向かないわ）
 *.gguf
 llama-server.exe
-
-# Pythonのキャッシュ
 __pycache__/
 *.pyc
-
-# 仮想環境
 venv/
 .venv/
