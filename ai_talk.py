@@ -18,6 +18,10 @@ XAI_BASE_URL = "https://api.x.ai/v1"
 XAI_MODEL = "grok-4-1-fast-non-reasoning"
 TSUMIKI_URL = "http://192.168.1.220:8080/v1/chat/completions"
 VOICEVOX_URL = "http://localhost:50021"
+# --- voice box の設定 ---
+VOICEVOX_SPEED_SCALE = 1.25
+VOICEVOX_VOLUME_SCALE = 1.1
+VOICEVOX_PITCH_SCALE = 0.08
 
 # --- セッションの固定 ---
 session = requests.Session()
@@ -33,7 +37,11 @@ def audio_worker():
         try:
             query_res = session.post(f"{VOICEVOX_URL}/audio_query", params={'text': text, 'speaker': style_id}, timeout=10)
             query_data = query_res.json()
-            query_data.update({'speedScale': 1.25, 'volumeScale': 1.1, 'pitchScale': 0.08})
+            query_data.update({
+                'speedScale': VOICEVOX_SPEED_SCALE,
+                'volumeScale': VOICEVOX_VOLUME_SCALE,
+                'pitchScale': VOICEVOX_PITCH_SCALE
+            })
             synthesis_res = session.post(f"{VOICEVOX_URL}/synthesis", params={'speaker': style_id}, data=json.dumps(query_data), timeout=30)
             filename = f"temp_voice_{int(time.time()*1000)}.wav"
             with open(filename, "wb") as f:
