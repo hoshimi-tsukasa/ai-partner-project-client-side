@@ -21,7 +21,7 @@ VOICEVOX_URL = "http://localhost:50021"
 # --- voice box の設定 ---
 VOICEVOX_SPEED_SCALE = 1.25
 VOICEVOX_VOLUME_SCALE = 1.1
-VOICEVOX_PITCH_SCALE = 0.08
+VOICEVOX_PITCH_SCALE = 0
 
 # --- セッションの固定 ---
 session = requests.Session()
