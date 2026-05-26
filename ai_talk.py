@@ -66,10 +66,24 @@ def main():
     grok_sys = load_file("grok_prompt.txt", "あなたはつみきの司令塔です。")
 
     print("\n" + "="*40)
-    user_input = input("マスター: ")
+    # 入力プロンプト変更
+    user_input = input("入力タイプを指定: [ターミナル] または [チャット] を付けて入力: ")
     if not user_input.strip(): return
     
-    # 1. Grok分析
+    # タグバリデーション
+    if not user_input.startswith(("[ターミナル]", "[チャット]")):
+        print("エラー: 入力は [ターミナル] または [チャット] タグで始めてください")
+        return
+
+    # YouTubeコメント読み上げ (チャット入力時)
+    if user_input.startswith("[チャット]"):
+        comment_text = user_input[len("[チャット]"):].strip()
+        if comment_text:
+            print(f"\n📢 YouTubeコメント読み上げ: 「{comment_text}」")
+            audio_queue.put((comment_text, 61))
+            time.sleep(1.5)  # 読み上げ間隔
+
+    # Grok分析 (全入力共通)
     print(f"📡 思考スキャン中...", end=" ", flush=True)
     t_start = time.time()
     
