@@ -13,9 +13,9 @@ from openai import OpenAI
 load_dotenv()
 
 # --- 設定 ---
-XAI_API_KEY = os.getenv("XAI_API_KEY")
-XAI_BASE_URL = "https://api.x.ai/v1"
-XAI_MODEL = "grok-4-1-fast-non-reasoning"
+DEEPINFRA_API_KEY = os.getenv("DEEPINFRA_API_KEY")
+DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
+DEEPINFRA_MODEL = "Qwen/Qwen2.5-72B-Instruct"  # ロールプレイ得意の高いモデル
 VOICEVOX_URL = "http://localhost:50021"
 # --- voice box の設定 ---
 VOICEVOX_SPEED_SCALE = 1.25
@@ -78,7 +78,7 @@ def load_file(filepath, default_text=""):
         return f.read().strip()
 
 
-client = OpenAI(api_key=XAI_API_KEY, base_url=XAI_BASE_URL)
+client = OpenAI(api_key=DEEPINFRA_API_KEY, base_url=DEEPINFRA_BASE_URL)
 
 
 def main():
@@ -110,7 +110,7 @@ def main():
     t_start = time.time()
 
     grok_res = client.chat.completions.create(
-        model=XAI_MODEL,
+        model=DEEPINFRA_MODEL,
         messages=[
             {"role": "system", "content": grok_sys},
             {"role": "user", "content": user_input},
