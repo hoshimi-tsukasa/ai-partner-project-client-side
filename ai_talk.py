@@ -82,42 +82,32 @@ client = OpenAI(api_key=DEEPINFRA_API_KEY, base_url=DEEPINFRA_BASE_URL)
 
 
 def main():
-    grok_sys = load_file("grok_prompt.txt", "あなたは生意気な少女AIです。")
+    system_prompt = load_file("system_prompt.txt", "あなたは生意気な少女AIです。")
 
     print("\n" + "=" * 40)
     # 入力プロンプト変更
-    user_input = input(
-        "入力タイプを指定: [ターミナル] または [チャット] を付けて入力: "
-    )
+    user_input = input("入力 (YouTubeコメント): ")
     if not user_input.strip():
         return
 
-    # タグバリデーション
-    if not user_input.startswith(("[ターミナル]", "[チャット]")):
-        print("エラー: 入力は [ターミナル] または [チャット] タグで始めてください")
-        return
+    comment_text = user_input.strip()
+    print(f"\n📢 YouTubeコメント読み上げ: 「{comment_text}」")
+    audio_queue.put((comment_text, 61))
+    time.sleep(1.5)  # 読み上げ間隔
 
-    # YouTubeコメント読み上げ (チャット入力時)
-    if user_input.startswith("[チャット]"):
-        comment_text = user_input[len("[チャット]") :].strip()
-        if comment_text:
-            print(f"\n📢 YouTubeコメント読み上げ: 「{comment_text}」")
-            audio_queue.put((comment_text, 61))
-            time.sleep(1.5)  # 読み上げ間隔
-
-    # Grok直接応答 (全入力共通)
-    print(f"📡 Grok応答生成中...", end=" ", flush=True)
+    # DeepInfra直接応答 (全入力共通)
+    print(f"📡 DeepInfra応答生成中...", end=" ", flush=True)
     t_start = time.time()
 
-    grok_res = client.chat.completions.create(
+    deepinfra_res = client.chat.completions.create(
         model=DEEPINFRA_MODEL,
         messages=[
-            {"role": "system", "content": grok_sys},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_input},
         ],
         response_format={"type": "json_object"},
     )
-    res_json = json.loads(grok_res.choices[0].message.content)
+    res_json = json.loads(deepinfra_res.choices[0].message.content)
     感情ID = res_json.get("style_id", 61)
     response_text = res_json.get("response", "")
     print(f"Done! (Style:{感情ID})")
@@ -135,7 +125,7 @@ def main():
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         f.write(f"[{timestamp}] ID:{感情ID}\n")
         f.write(f" Master: {user_input}\n")
-        f.write(f" Tsumiki(Grok直接): {response_text}\n")
+        f.write(f" Tsumiki(DeepInfra直接): {response_text}\n")
         f.write(f" ResponseTime: {response_time:.2f}s\n")
         f.write("-" * 40 + "\n")
 
@@ -143,7 +133,7 @@ def main():
 
 
 if __name__ == "__main__":
-    print(f"--- つみき v3.4 (Grok直接応答版) 起動 ---")
+    print(f"--- つみき v3.6 (DeepInfra直接応答版 / チャット専用) 起動 ---")
     while True:
         try:
             main()
