@@ -44,13 +44,34 @@ def load_file(filepath, default_text=""):
         return f.read().strip()
 
 
-# --- スレッド1: 音声再生ワーカー（目詰まり対策版） ---
+# 💡 リスナーが打った「英字コメント」をVOICEVOXで安全に読ませるための1文字読み変換
+def alphabet_to_katakana(text):
+    mapping = {
+        'a': 'エー', 'b': 'ビー', 'c': 'シー', 'd': 'ディー', 'e': 'イー',
+        'f': 'エフ', 'g': 'ジー', 'h': 'エイチ', 'i': 'アイ', 'j': 'ジェー',
+        'k': 'ケー', 'l': 'エル', 'm': 'エム', 'n': 'エヌ', 'o': 'オー',
+        'p': 'ピー', 'q': 'キュー', 'r': 'アール', 's': 'エス', 't': 'ティー',
+        'u': 'ユー', 'v': 'ブイ', 'w': 'ダブリュー', 'x': 'エックス', 'y': 'ワイ', 'z': 'ゼット',
+        'A': 'エー', 'B': 'ビー', 'C': 'シー', 'D': 'ディー', 'E': 'イー',
+        'F': 'エフ', 'G': 'ジー', 'H': 'エイチ', 'I': 'アイ', 'J': 'ジェー',
+        'K': 'ケー', 'L': 'エル', 'M': 'エム', 'N': 'エヌ', 'O': 'オー',
+        'P': 'ピー', 'Q': 'キュー', 'R': 'アール', 'S': 'エス', 'T': 'ティー',
+        'U': 'ユー', 'V': 'ブイ', 'W': 'ダブリュー', 'X': 'エックス', 'Y': 'ワイ', 'Z': 'ゼット'
+    }
+    for eng, kata in mapping.items():
+        text = text.replace(eng, kata)
+    return text
+
+
+# --- スレッド1: 音声再生ワーカー（クリーン版） ---
 def audio_worker():
     while True:
         item = audio_queue.get()
         if item is None:
             break
         text, style_id = item
+
+        # 💡 ここでの一律アルファベット変換を削除しました（AIが作ったカタカナをそのまま活かします）
         print(f"\n🔊 [音声キュー処理開始] テキスト: 「{text}」 (Style:{style_id})")
         try:
             # 1. 音声クエリの作成
@@ -88,9 +109,7 @@ def audio_worker():
             print(f"   -> 3/3 winsoundで再生中... (サイズ: {len(synthesis_res.content)} bytes)")
             winsound.PlaySound(filename, winsound.SND_FILENAME)
 
-            # 💡【最重要・修正ポイント】
-            # 再生直後に0.6秒の「息継ぎ（ウェイト）」を入れます。
-            # これによりWindowsがオーディオデバイスを安全に閉じる時間を稼ぎ、連続再生時の音落ちを完璧に防ぎます。
+            # 息継ぎ（ウェイト）
             time.sleep(0.6)
 
             try:
@@ -121,18 +140,31 @@ def comment_worker():
             break
         comment_text = item
 
+        # AI用のタグを剥ぎ取った、表示・読み上げ用のクリーンなテキストを作る
+        clean_text = comment_text
+        is_hoshimi = False
+        if comment_text.startswith("【ほしみ】: "):
+            clean_text = comment_text.replace("【ほしみ】: ", "", 1)
+            is_hoshimi = True
+        elif comment_text.startswith("【チャット】: "):
+            clean_text = comment_text.replace("【チャット】: ", "", 1)
+
         print("\n" + "=" * 40)
-        print(f"\n📢 YouTubeコメント受信: 「{comment_text}」")
+        if is_hoshimi:
+            print(f"\n💻 ほしみからの入力: 「{clean_text}」")
+        else:
+            print(f"\n📢 YouTubeチャット受信: 「{clean_text}」")
 
         # 終了コマンドの判定
-        if comment_text in ["/exit", "つみき終了"]:
+        if clean_text in ["/exit", "つみき終了"]:
             print("\n🛑 終了コマンドを検知しました。システムを停止します。")
             audio_queue.put(("システムを終了します", 61))
             time.sleep(3.0)
             os._exit(0)
 
-        # まずユーザーのコメントを音声キューへ
-        audio_queue.put((comment_text, 61))
+        # 💡 ユーザーのコメント読み上げ時のみ、英字を安全な1文字読みに変換して音声キューへ投入
+        user_speech_text = alphabet_to_katakana(clean_text)
+        audio_queue.put((user_speech_text, 61))
         time.sleep(0.2)
 
         print(f"📡 DeepInfra応答生成中...", end=" ", flush=True)
@@ -167,6 +199,7 @@ def comment_worker():
 
             if response_text.strip():
                 print(f"💖 つみき: {response_text}")
+                # 💡 AIの返答はそのまま音声キューに流し込みます（AIがプロンプトに従って完璧なカタカナ表現を作ります）
                 audio_queue.put((response_text, 感情ID))
             else:
                 print("⚠️ 警告: AIの返答テキストが空っぽです")
@@ -177,7 +210,7 @@ def comment_worker():
             with open("chat_log.txt", "a", encoding="utf-8") as f:
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 f.write(f"[{timestamp}] ID:{感情ID}\n")
-                f.write(f" Master: {comment_text}\n")
+                f.write(f" Master: {clean_text}\n")
                 f.write(f" Tsumiki: {response_text}\n")
                 f.write(f" ResponseTime: {response_time:.2f}s\n")
                 f.write("-" * 40 + "\n")
@@ -186,6 +219,21 @@ def comment_worker():
             print(f"\n⚠️ AI応答生成エラー: {e}")
 
         comment_queue.task_done()
+
+
+# --- スレッド3: キーボード入力ワーカー ---
+def console_input_worker():
+    while True:
+        try:
+            user_input = input().strip()
+            if user_input:
+                comment_queue.put(f"【ほしみ】: {user_input}")
+
+        except (KeyboardInterrupt, EOFError):
+            break
+        except Exception as e:
+            print(f"⚠️ コンソール入力エラー: {e}")
+            time.sleep(1)
 
 
 # --- CastCraftからの接続を処理する関数 ---
@@ -220,7 +268,7 @@ def handle_client(conn, addr):
                     comment_text = raw_text.split("：", 1)[1].strip()
 
                 if comment_text:
-                    comment_queue.put(comment_text)
+                    comment_queue.put(f"【チャット】: {comment_text}")
     except Exception:
         pass
     finally:
@@ -229,10 +277,12 @@ def handle_client(conn, addr):
 
 threading.Thread(target=audio_worker, daemon=True).start()
 threading.Thread(target=comment_worker, daemon=True).start()
+threading.Thread(target=console_input_worker, daemon=True).start()
+
 
 if __name__ == "__main__":
-    print(f"--- つみき v3.6 (CastCraft連携・音飛び完全対策版) 起動 ---")
-    print(f"📡 ポート {TCP_PORT} でCastCraftからの送信を待ち受け中...")
+    print(f"--- つみき v3.6 (英字カタカナ化＆自動判別版) 起動 ---")
+    print(f"📡 ポート {TCP_PORT} で待ち受けつつ、キーボード入力も受付中...")
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
