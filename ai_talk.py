@@ -1,6 +1,8 @@
 import json
 import os
 import queue
+import socket
+import struct
 import threading
 import time
 import winsound
@@ -15,8 +17,13 @@ load_dotenv()
 # --- 設定 ---
 DEEPINFRA_API_KEY = os.getenv("DEEPINFRA_API_KEY")
 DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
-DEEPINFRA_MODEL = "Qwen/Qwen2.5-72B-Instruct"  # ロールプレイ得意の高いモデル
+DEEPINFRA_MODEL = "Qwen/Qwen2.5-72B-Instruct"
 VOICEVOX_URL = "http://localhost:50021"
+
+# CastCraftからの送信を受け取るポート
+TCP_HOST = "0.0.0.0"
+TCP_PORT = 50082
+
 # --- voice box の設定 ---
 VOICEVOX_SPEED_SCALE = 1.25
 VOICEVOX_VOLUME_SCALE = 1.1
@@ -25,17 +32,29 @@ VOICEVOX_PITCH_SCALE = 0
 # --- セッションの固定 ---
 session = requests.Session()
 
-# --- 音声処理用キュー ---
+# --- 各種キュー ---
 audio_queue = queue.Queue()
+comment_queue = queue.Queue()
 
 
+def load_file(filepath, default_text=""):
+    if not os.path.exists(filepath):
+        return default_text
+    with open(filepath, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+
+# --- スレッド1: 音声再生ワーカー（ログ実況版） ---
 def audio_worker():
     while True:
         item = audio_queue.get()
         if item is None:
             break
         text, style_id = item
+        print(f"🔊 [音声キュー処理開始] テキスト: 「{text}」 (Style:{style_id})")
         try:
+            # 1. 音声クエリの作成
+            print("   -> 1/3 VOICEVOXに音声クエリを要求中...", end="", flush=True)
             query_res = session.post(
                 f"{VOICEVOX_URL}/audio_query",
                 params={"text": text, "speaker": style_id},
@@ -49,93 +68,200 @@ def audio_worker():
                     "pitchScale": VOICEVOX_PITCH_SCALE,
                 }
             )
+            print(" OK!")
+
+            # 2. 音色合成
+            print("   -> 2/3 VOICEVOXで音声合成（WAV生成）中...", end="", flush=True)
             synthesis_res = session.post(
                 f"{VOICEVOX_URL}/synthesis",
                 params={"speaker": style_id},
                 data=json.dumps(query_data),
                 timeout=30,
             )
+            print(" OK!")
+
+            # 3. 再生
             filename = f"temp_voice_{int(time.time() * 1000)}.wav"
             with open(filename, "wb") as f:
                 f.write(synthesis_res.content)
+
+            print(
+                f"   -> 3/3 winsoundで再生中... (サイズ: {len(synthesis_res.content)} bytes)"
+            )
             winsound.PlaySound(filename, winsound.SND_FILENAME)
+
             try:
                 os.remove(filename)
             except:
                 pass
+            print("   -> 再生完了！")
         except Exception as e:
             print(f"\n⚠️ 音声ワーカーエラー: {e}")
         audio_queue.task_done()
 
 
-threading.Thread(target=audio_worker, daemon=True).start()
+# --- スレッド2: AI応答生成ワーカー ---
+def comment_worker():
+    base_system_prompt = load_file("system_prompt.txt", "あなたは生意気な少女AIです。")
 
-
-def load_file(filepath, default_text=""):
-    if not os.path.exists(filepath):
-        return default_text
-    with open(filepath, "r", encoding="utf-8") as f:
-        return f.read().strip()
-
-
-client = OpenAI(api_key=DEEPINFRA_API_KEY, base_url=DEEPINFRA_BASE_URL)
-
-
-def main():
-    system_prompt = load_file("system_prompt.txt", "あなたは生意気な少女AIです。")
-
-    print("\n" + "=" * 40)
-    # 入力プロンプト変更
-    user_input = input("入力 (YouTubeコメント): ")
-    if not user_input.strip():
-        return
-
-    comment_text = user_input.strip()
-    print(f"\n📢 YouTubeコメント読み上げ: 「{comment_text}」")
-    audio_queue.put((comment_text, 61))
-    time.sleep(1.5)  # 読み上げ間隔
-
-    # DeepInfra直接応答 (全入力共通)
-    print(f"📡 DeepInfra応答生成中...", end=" ", flush=True)
-    t_start = time.time()
-
-    deepinfra_res = client.chat.completions.create(
-        model=DEEPINFRA_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_input},
-        ],
-        response_format={"type": "json_object"},
+    # AIがJSONのキーを気まぐれに変えないよう、システムプロンプトの末尾に構造の指示を強制追加
+    system_prompt = (
+        base_system_prompt
+        + "\n必ず次のJSONフォーマットのみで返答を出力してください。余計な解説は一切不要です。\n"
+        '{"response": "あなたの生意気な返答メッセージ", "style_id": 61}'
     )
-    res_json = json.loads(deepinfra_res.choices[0].message.content)
-    感情ID = res_json.get("style_id", 61)
-    response_text = res_json.get("response", "")
-    print(f"Done! (Style:{感情ID})")
 
-    # 直接音声合成
-    if response_text.strip():
-        print(f"💖 つみき: {response_text}")
-        audio_queue.put((response_text, 感情ID))
+    client = OpenAI(api_key=DEEPINFRA_API_KEY, base_url=DEEPINFRA_BASE_URL)
 
-    # 応答時間の確定
-    response_time = time.time() - t_start
+    while True:
+        item = comment_queue.get()
+        if item is None:
+            break
+        comment_text = item
 
-    # --- 詳細ログを記録 (chat_log.txt) ---
-    with open("chat_log.txt", "a", encoding="utf-8") as f:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        f.write(f"[{timestamp}] ID:{感情ID}\n")
-        f.write(f" Master: {user_input}\n")
-        f.write(f" Tsumiki(DeepInfra直接): {response_text}\n")
-        f.write(f" ResponseTime: {response_time:.2f}s\n")
-        f.write("-" * 40 + "\n")
+        print("\n" + "=" * 40)
+        print(f"\n📢 YouTubeコメント受信: 「{comment_text}」")
 
-    print(f"\n⚡ 応答完了: {response_time:.2f}秒")
+        # 💡【新機能】終了コマンドの判定
+        if comment_text in ["/exit", "つみき終了"]:
+            print("\n🛑 終了コマンドを検知しました。システムを停止します。")
+            # 終了を音声でお知らせ
+            audio_queue.put(("システムを終了します", 61))
+            time.sleep(3.0)  # 音声再生が終わるのを少し待つ
+            os._exit(0)  # プログラムを完全に強制終了
 
+        # まずユーザーのコメントを音声キューへ
+        audio_queue.put((comment_text, 61))
+        time.sleep(0.2)
+
+        print(f"📡 DeepInfra応答生成中...", end=" ", flush=True)
+        t_start = time.time()
+
+        try:
+            deepinfra_res = client.chat.completions.create(
+                model=DEEPINFRA_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": comment_text},
+                ],
+                response_format={"type": "json_object"},
+            )
+
+            # AIの生の返答テキストを表示（デバッグ用）
+            raw_content = deepinfra_res.choices[0].message.content
+            print(f"Done! (AI生出力: {raw_content})")
+
+            # 返答をパース
+            res_json = json.loads(raw_content)
+
+            if isinstance(res_json, list) and len(res_json) > 0:
+                res_json = res_json[0]
+
+            response_text = ""
+            感情ID = 61
+
+            if isinstance(res_json, dict):
+                response_text = (
+                    res_json.get("response")
+                    or res_json.get("reply")
+                    or res_json.get("text")
+                    or ""
+                )
+                感情ID = res_json.get("style_id", 61)
+            else:
+                response_text = str(res_json)
+
+            if response_text.strip():
+                print(f"💖 つみき: {response_text}")
+                audio_queue.put((response_text, 感情ID))
+            else:
+                print("⚠️ 警告: AIの返答テキストが空っぽです")
+
+            response_time = time.time() - t_start
+            print(f"⚡ 応答処理完了: {response_time:.2f}秒")
+
+            with open("chat_log.txt", "a", encoding="utf-8") as f:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"[{timestamp}] ID:{感情ID}\n")
+                f.write(f" Master: {comment_text}\n")
+                f.write(f" Tsumiki: {response_text}\n")
+                f.write(f" ResponseTime: {response_time:.2f}s\n")
+                f.write("-" * 40 + "\n")
+
+        except Exception as e:
+            print(f"\n⚠️ AI応答生成エラー: {e}")
+
+        comment_queue.task_done()
+
+
+# --- CastCraftからの接続を処理する関数 ---
+def handle_client(conn, addr):
+    try:
+        while True:
+            header = conn.recv(15)
+            if not header or len(header) < 15:
+                break
+
+            command, speed, pitch, volume, voice, encoding, length = struct.unpack(
+                "<hhhhhBi", header
+            )
+
+            text_bytes = b""
+            while len(text_bytes) < length:
+                packet = conn.recv(length - len(text_bytes))
+                if not packet:
+                    break
+                text_bytes += packet
+
+            if encoding == 0:
+                raw_text = text_bytes.decode("utf-8", errors="ignore").strip()
+            elif encoding == 1:
+                raw_text = text_bytes.decode("utf-16", errors="ignore").strip()
+            else:
+                raw_text = text_bytes.decode("shift_jis", errors="ignore").strip()
+
+            if raw_text:
+                comment_text = raw_text
+                if ":" in raw_text:
+                    comment_text = raw_text.split(":", 1)[1].strip()
+                elif "：" in raw_text:
+                    comment_text = raw_text.split("：", 1)[1].strip()
+
+                if comment_text:
+                    comment_queue.put(comment_text)
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+threading.Thread(target=audio_worker, daemon=True).start()
+threading.Thread(target=comment_worker, daemon=True).start()
 
 if __name__ == "__main__":
-    print(f"--- つみき v3.6 (DeepInfra直接応答版 / チャット専用) 起動 ---")
+    print(f"--- つみき v3.6 (CastCraft連携・終了コマンド搭載版) 起動 ---")
+    print(f"📡 ポート {TCP_PORT} でCastCraftからの送信を待ち受け中...")
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    try:
+        server.bind((TCP_HOST, TCP_PORT))
+        server.listen(10)
+    except Exception as e:
+        print(f"❌ サーバー起動エラー: {e}")
+        exit(1)
+
     while True:
         try:
-            main()
+            conn, addr = server.accept()
+            threading.Thread(
+                target=handle_client, args=(conn, addr), daemon=True
+            ).start()
         except KeyboardInterrupt:
+            print("\n終了します。")
             break
+        except Exception:
+            pass
+
+    server.close()
