@@ -1,11 +1,11 @@
 import json
 import os
 import queue
-import socket
-import struct
 import threading
 import time
 import winsound
+import socket
+import struct
 from datetime import datetime
 
 import requests
@@ -44,14 +44,14 @@ def load_file(filepath, default_text=""):
         return f.read().strip()
 
 
-# --- スレッド1: 音声再生ワーカー（ログ実況版） ---
+# --- スレッド1: 音声再生ワーカー（目詰まり対策版） ---
 def audio_worker():
     while True:
         item = audio_queue.get()
         if item is None:
             break
         text, style_id = item
-        print(f"🔊 [音声キュー処理開始] テキスト: 「{text}」 (Style:{style_id})")
+        print(f"\n🔊 [音声キュー処理開始] テキスト: 「{text}」 (Style:{style_id})")
         try:
             # 1. 音声クエリの作成
             print("   -> 1/3 VOICEVOXに音声クエリを要求中...", end="", flush=True)
@@ -85,10 +85,13 @@ def audio_worker():
             with open(filename, "wb") as f:
                 f.write(synthesis_res.content)
 
-            print(
-                f"   -> 3/3 winsoundで再生中... (サイズ: {len(synthesis_res.content)} bytes)"
-            )
+            print(f"   -> 3/3 winsoundで再生中... (サイズ: {len(synthesis_res.content)} bytes)")
             winsound.PlaySound(filename, winsound.SND_FILENAME)
+
+            # 💡【最重要・修正ポイント】
+            # 再生直後に0.6秒の「息継ぎ（ウェイト）」を入れます。
+            # これによりWindowsがオーディオデバイスを安全に閉じる時間を稼ぎ、連続再生時の音落ちを完璧に防ぎます。
+            time.sleep(0.6)
 
             try:
                 os.remove(filename)
@@ -104,10 +107,9 @@ def audio_worker():
 def comment_worker():
     base_system_prompt = load_file("system_prompt.txt", "あなたは生意気な少女AIです。")
 
-    # AIがJSONのキーを気まぐれに変えないよう、システムプロンプトの末尾に構造の指示を強制追加
     system_prompt = (
-        base_system_prompt
-        + "\n必ず次のJSONフォーマットのみで返答を出力してください。余計な解説は一切不要です。\n"
+        base_system_prompt +
+        "\n必ず次のJSONフォーマットのみで返答を出力してください。余計な解説は一切不要です。\n"
         '{"response": "あなたの生意気な返答メッセージ", "style_id": 61}'
     )
 
@@ -122,13 +124,12 @@ def comment_worker():
         print("\n" + "=" * 40)
         print(f"\n📢 YouTubeコメント受信: 「{comment_text}」")
 
-        # 💡【新機能】終了コマンドの判定
+        # 終了コマンドの判定
         if comment_text in ["/exit", "つみき終了"]:
             print("\n🛑 終了コマンドを検知しました。システムを停止します。")
-            # 終了を音声でお知らせ
             audio_queue.put(("システムを終了します", 61))
-            time.sleep(3.0)  # 音声再生が終わるのを少し待つ
-            os._exit(0)  # プログラムを完全に強制終了
+            time.sleep(3.0)
+            os._exit(0)
 
         # まずユーザーのコメントを音声キューへ
         audio_queue.put((comment_text, 61))
@@ -147,11 +148,9 @@ def comment_worker():
                 response_format={"type": "json_object"},
             )
 
-            # AIの生の返答テキストを表示（デバッグ用）
             raw_content = deepinfra_res.choices[0].message.content
             print(f"Done! (AI生出力: {raw_content})")
 
-            # 返答をパース
             res_json = json.loads(raw_content)
 
             if isinstance(res_json, list) and len(res_json) > 0:
@@ -161,12 +160,7 @@ def comment_worker():
             感情ID = 61
 
             if isinstance(res_json, dict):
-                response_text = (
-                    res_json.get("response")
-                    or res_json.get("reply")
-                    or res_json.get("text")
-                    or ""
-                )
+                response_text = res_json.get("response") or res_json.get("reply") or res_json.get("text") or ""
                 感情ID = res_json.get("style_id", 61)
             else:
                 response_text = str(res_json)
@@ -202,9 +196,7 @@ def handle_client(conn, addr):
             if not header or len(header) < 15:
                 break
 
-            command, speed, pitch, volume, voice, encoding, length = struct.unpack(
-                "<hhhhhBi", header
-            )
+            command, speed, pitch, volume, voice, encoding, length = struct.unpack('<hhhhhBi', header)
 
             text_bytes = b""
             while len(text_bytes) < length:
@@ -214,11 +206,11 @@ def handle_client(conn, addr):
                 text_bytes += packet
 
             if encoding == 0:
-                raw_text = text_bytes.decode("utf-8", errors="ignore").strip()
+                raw_text = text_bytes.decode('utf-8', errors='ignore').strip()
             elif encoding == 1:
-                raw_text = text_bytes.decode("utf-16", errors="ignore").strip()
+                raw_text = text_bytes.decode('utf-16', errors='ignore').strip()
             else:
-                raw_text = text_bytes.decode("shift_jis", errors="ignore").strip()
+                raw_text = text_bytes.decode('shift_jis', errors='ignore').strip()
 
             if raw_text:
                 comment_text = raw_text
@@ -239,7 +231,7 @@ threading.Thread(target=audio_worker, daemon=True).start()
 threading.Thread(target=comment_worker, daemon=True).start()
 
 if __name__ == "__main__":
-    print(f"--- つみき v3.6 (CastCraft連携・終了コマンド搭載版) 起動 ---")
+    print(f"--- つみき v3.6 (CastCraft連携・音飛び完全対策版) 起動 ---")
     print(f"📡 ポート {TCP_PORT} でCastCraftからの送信を待ち受け中...")
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -255,9 +247,7 @@ if __name__ == "__main__":
     while True:
         try:
             conn, addr = server.accept()
-            threading.Thread(
-                target=handle_client, args=(conn, addr), daemon=True
-            ).start()
+            threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
         except KeyboardInterrupt:
             print("\n終了します。")
             break
