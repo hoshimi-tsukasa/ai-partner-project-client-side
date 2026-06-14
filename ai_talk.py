@@ -34,9 +34,13 @@ VOICEVOX_PITCH_SCALE = 0
 # --- セッションの固定 ---
 session = requests.Session()
 
-# --- 各種キュー ---
+# --- 各種キューと記憶の設定 ---
 audio_queue = queue.Queue()
 comment_queue = queue.Queue()
+
+# 🧠 つみきの記憶用リスト（直近の文脈を保持）
+conversation_history = []
+MAX_HISTORY_LENGTH = 14  # 保持する最大発言数（14件＝約7往復分）
 
 
 def load_file(filepath, default_text=""):
@@ -106,6 +110,7 @@ def audio_worker():
 
 # --- スレッド2: AI応答生成ワーカー ---
 def comment_worker():
+    global conversation_history
     base_system_prompt = load_file("system_prompt.txt", "あなたは生意気な少女AIです。")
 
     system_prompt = (
@@ -144,20 +149,26 @@ def comment_worker():
             time.sleep(3.0)
             os._exit(0)
 
-        # 💡 ユーザーのコメントをそのまま音声キューへ投入（英字変換を廃止）
+        # ユーザーのコメントをそのまま音声キューへ投入
         audio_queue.put((clean_text, 61))
         time.sleep(0.2)
 
-        print(f"📡 AI応答生成中...", end=" ", flush=True)
+        print(f"📡 DeepInfra応答生成中(記憶数: {len(conversation_history)})...", end=" ", flush=True)
         t_start = time.time()
 
         try:
+            # 🧠 1. システムプロンプトから始まるメッセージの土台を作る
+            api_messages = [{"role": "system", "content": system_prompt}]
+
+            # 🧠 2. これまでの会話履歴（記憶）を挟み込む
+            api_messages.extend(conversation_history)
+
+            # 🧠 3. 最後に今回の新しいコメントを追加する
+            api_messages.append({"role": "user", "content": comment_text})
+
             deepinfra_res = client.chat.completions.create(
                 model=DEEPINFRA_MODEL,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": comment_text},
-                ],
+                messages=api_messages,
                 response_format={"type": "json_object"},
             )
 
@@ -180,8 +191,16 @@ def comment_worker():
 
             if response_text.strip():
                 print(f"💖 つみき: {response_text}")
-                # 💡 AIの返答はそのまま音声キューに流し込みます（AIがプロンプトに従って完璧なカタカナ表現を作ります）
                 audio_queue.put((response_text, 感情ID))
+
+                # 🧠 4. 今回のやり取りを新しい記憶としてストックに追加
+                conversation_history.append({"role": "user", "content": comment_text})
+                # ※JSONフォーマットを維持させるため、AIの生出力（JSON文字列）のまま記憶させます
+                conversation_history.append({"role": "assistant", "content": raw_content})
+
+                # 🧠 5. 記憶が溢れたら、古いもの（先頭）から削除する
+                if len(conversation_history) > MAX_HISTORY_LENGTH:
+                    conversation_history = conversation_history[-MAX_HISTORY_LENGTH:]
             else:
                 print("⚠️ 警告: AIの返答テキストが空っぽです")
 
@@ -262,7 +281,7 @@ threading.Thread(target=console_input_worker, daemon=True).start()
 
 
 if __name__ == "__main__":
-    print(f"--- つみき v3.6 (自動判別版) 起動 ---")
+    print(f"--- つみき v3.6 (文脈記憶対応版) 起動 ---")
     print(f"📡 ポート {TCP_PORT} で待ち受けつつ、キーボード入力も受付中...")
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
