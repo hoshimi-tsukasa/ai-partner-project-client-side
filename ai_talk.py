@@ -46,25 +46,6 @@ def load_file(filepath, default_text=""):
         return f.read().strip()
 
 
-# 💡 リスナーが打った「英字コメント」をVOICEVOXで安全に読ませるための1文字読み変換
-def alphabet_to_katakana(text):
-    mapping = {
-        'a': 'エー', 'b': 'ビー', 'c': 'シー', 'd': 'ディー', 'e': 'イー',
-        'f': 'エフ', 'g': 'ジー', 'h': 'エイチ', 'i': 'アイ', 'j': 'ジェー',
-        'k': 'ケー', 'l': 'エル', 'm': 'エム', 'n': 'エヌ', 'o': 'オー',
-        'p': 'ピー', 'q': 'キュー', 'r': 'アール', 's': 'エス', 't': 'ティー',
-        'u': 'ユー', 'v': 'ブイ', 'w': 'ダブリュー', 'x': 'エックス', 'y': 'ワイ', 'z': 'ゼット',
-        'A': 'エー', 'B': 'ビー', 'C': 'シー', 'D': 'ディー', 'E': 'イー',
-        'F': 'エフ', 'G': 'ジー', 'H': 'エイチ', 'I': 'アイ', 'J': 'ジェー',
-        'K': 'ケー', 'L': 'エル', 'M': 'エム', 'N': 'エヌ', 'O': 'オー',
-        'P': 'ピー', 'Q': 'キュー', 'R': 'アール', 'S': 'エス', 'T': 'ティー',
-        'U': 'ユー', 'V': 'ブイ', 'W': 'ダブリュー', 'X': 'エックス', 'Y': 'ワイ', 'Z': 'ゼット'
-    }
-    for eng, kata in mapping.items():
-        text = text.replace(eng, kata)
-    return text
-
-
 # --- スレッド1: 音声再生ワーカー（クリーン版） ---
 def audio_worker():
     while True:
@@ -73,7 +54,6 @@ def audio_worker():
             break
         text, style_id = item
 
-        # 💡 ここでの一律アルファベット変換を削除しました（AIが作ったカタカナをそのまま活かします）
         print(f"\n🔊 [音声キュー処理開始] テキスト: 「{text}」 (Style:{style_id})")
         try:
             # 1. 音声クエリの作成
@@ -164,9 +144,8 @@ def comment_worker():
             time.sleep(3.0)
             os._exit(0)
 
-        # 💡 ユーザーのコメント読み上げ時のみ、英字を安全な1文字読みに変換して音声キューへ投入
-        user_speech_text = alphabet_to_katakana(clean_text)
-        audio_queue.put((user_speech_text, 61))
+        # 💡 ユーザーのコメントをそのまま音声キューへ投入（英字変換を廃止）
+        audio_queue.put((clean_text, 61))
         time.sleep(0.2)
 
         print(f"📡 DeepInfra応答生成中...", end=" ", flush=True)
@@ -283,7 +262,7 @@ threading.Thread(target=console_input_worker, daemon=True).start()
 
 
 if __name__ == "__main__":
-    print(f"--- つみき v3.6 (英字カタカナ化＆自動判別版) 起動 ---")
+    print(f"--- つみき v3.6 (自動判別版) 起動 ---")
     print(f"📡 ポート {TCP_PORT} で待ち受けつつ、キーボード入力も受付中...")
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
