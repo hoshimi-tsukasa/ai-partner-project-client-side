@@ -298,12 +298,11 @@ threading.Thread(target=audio_worker, daemon=True).start()
 threading.Thread(target=comment_worker, daemon=True).start()
 threading.Thread(target=console_input_worker, daemon=True).start()
 
-
 if __name__ == "__main__":
     print(f"--- つみき v3.6 (文脈記憶対応版) 起動 ---")
     print(f"📡 ポート {TCP_PORT} で待ち受けつつ、キーボード入力も受付中...")
-
-    server = socket.socket(socket.AF_INET, socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     try:
         server.bind((TCP_HOST, TCP_PORT))
