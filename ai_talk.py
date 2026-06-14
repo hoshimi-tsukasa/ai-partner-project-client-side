@@ -235,17 +235,25 @@ def console_input_worker():
             print(f"⚠️ コンソール入力エラー: {e}")
             time.sleep(1)
 
-
-# --- CastCraftからの接続を処理する関数 ---
+# --- CastCraftからの接続を処理する関数（強化版） ---
 def handle_client(conn, addr):
     try:
         while True:
-            header = conn.recv(15)
-            if not header or len(header) < 15:
+            # 💡 対策①: 15バイトのヘッダーが確実に溜まるまでループして受信する
+            header = b""
+            while len(header) < 15:
+                packet = conn.recv(15 - len(header))
+                if not packet:
+                    break
+                header += packet
+
+            # それでも15バイトに満たない場合は通信終了
+            if len(header) < 15:
                 break
 
             command, speed, pitch, volume, voice, encoding, length = struct.unpack('<hhhhhBi', header)
 
+            # 本文の受信（ここは元々綺麗にループ処理されています）
             text_bytes = b""
             while len(text_bytes) < length:
                 packet = conn.recv(length - len(text_bytes))
@@ -253,6 +261,7 @@ def handle_client(conn, addr):
                     break
                 text_bytes += packet
 
+            # デコード処理
             if encoding == 0:
                 raw_text = text_bytes.decode('utf-8', errors='ignore').strip()
             elif encoding == 1:
@@ -262,15 +271,24 @@ def handle_client(conn, addr):
 
             if raw_text:
                 comment_text = raw_text
-                if ":" in raw_text:
-                    comment_text = raw_text.split(":", 1)[1].strip()
-                elif "：" in raw_text:
-                    comment_text = raw_text.split("：", 1)[1].strip()
+
+                # 💡 対策②: CastCraftの「ユーザー名:本文」形式の時だけ安全に切り分ける
+                # 本文にURL(https://)が含まれている場合は、コロン分割をスキップする安全策
+                if "http" not in raw_text:
+                    if ":" in raw_text:
+                        parts = raw_text.split(":", 1)
+                        # コロンの後ろに文字がある場合のみ採用
+                        if len(parts) > 1 and parts[1].strip():
+                            comment_text = parts[1].strip()
+                    elif "：" in raw_text:
+                        parts = raw_text.split("：", 1)
+                        if len(parts) > 1 and parts[1].strip():
+                            comment_text = parts[1].strip()
 
                 if comment_text:
                     comment_queue.put(f"【チャット】: {comment_text}")
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"⚠️ クライアント処理エラー: {e}")
     finally:
         conn.close()
 
