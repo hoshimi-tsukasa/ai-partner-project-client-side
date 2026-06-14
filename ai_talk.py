@@ -42,6 +42,9 @@ comment_queue = queue.Queue()
 conversation_history = []
 MAX_HISTORY_LENGTH = 30  # 保持する最大発言数（14件＝約7往復分）
 
+# ⏳ 沈黙監視用のタイマー変数（新規追加）
+last_active_time = time.time()
+
 
 def load_file(filepath, default_text=""):
     if not os.path.exists(filepath):
@@ -110,7 +113,7 @@ def audio_worker():
 
 # --- スレッド2: AI応答生成ワーカー ---
 def comment_worker():
-    global conversation_history
+    global conversation_history, last_active_time  # 💡 last_active_time を追加
     base_system_prompt = load_file("system_prompt.txt", "あなたは生意気な少女AIです。")
 
     system_prompt = (
@@ -127,18 +130,28 @@ def comment_worker():
             break
         comment_text = item
 
+        # 💡 入力があったためタイマーを即座にリセット
+        last_active_time = time.time()
+
         # AI用のタグを剥ぎ取った、表示・読み上げ用のクリーンなテキストを作る
         clean_text = comment_text
         is_hoshimi = False
+        is_system = False  # 💡 システムからの自動催促判定用のフラグを追加
+
         if comment_text.startswith("【ほしみ】: "):
             clean_text = comment_text.replace("【ほしみ】: ", "", 1)
             is_hoshimi = True
         elif comment_text.startswith("【チャット】: "):
             clean_text = comment_text.replace("【チャット】: ", "", 1)
+        elif comment_text.startswith("【システム】: "):  # 💡 システム命令の検知を追加
+            clean_text = comment_text.replace("【システム】: ", "", 1)
+            is_system = True
 
         print("\n" + "=" * 40)
         if is_hoshimi:
             print(f"\n💻 ほしみからの入力: 「{clean_text}」")
+        elif is_system:
+            print(f"\n🤖 システムからの自動催促: 「{clean_text}」")
         else:
             print(f"\n📢 YouTubeチャット受信: 「{clean_text}」")
 
@@ -149,8 +162,8 @@ def comment_worker():
             time.sleep(3.0)
             os._exit(0)
 
-        # 💡 【変更箇所】YouTubeチャットからの入力（ほしみ以外）の時だけ、コメントを読み上げる
-        if not is_hoshimi:
+        # 💡 【変更箇所】YouTubeチャットからの入力（ほしみ・システム以外）の時だけ、コメントを読み上げる
+        if not is_hoshimi and not is_system:
             audio_queue.put((clean_text, 61))
             time.sleep(0.2)
 
@@ -194,6 +207,9 @@ def comment_worker():
                 print(f"💖 つみき: {response_text}")
                 audio_queue.put((response_text, 感情ID))
 
+                # 💡 AIが話し終わったタイミングで再度タイマーをリセット（自身の発言から30秒を数えるため）
+                last_active_time = time.time()
+
                 # 🧠 4. 今回のやり取りを新しい記憶としてストックに追加
                 conversation_history.append({"role": "user", "content": comment_text})
                 # ※JSONフォーマットを維持させるため、AIの生出力（JSON文字列）のまま記憶させます
@@ -235,6 +251,27 @@ def console_input_worker():
         except Exception as e:
             print(f"⚠️ コンソール入力エラー: {e}")
             time.sleep(1)
+
+
+# --- スレッド4: 沈黙監視ワーカー（新規追加） ---
+def silence_monitor_worker():
+    global last_active_time
+    while True:
+        time.sleep(1)  # 1秒ごとにタイマーをチェック
+
+        # 最後に何かしらの発言・入力があってから30秒以上経過したか判定
+        if time.time() - last_active_time >= 30:
+            # AIが現在考え中（応答処理中）でなく、かつ音声再生中（キューに残りがある）でもない場合のみ実行
+            if comment_queue.empty() and audio_queue.empty():
+                print("\n⏳ 30秒間の沈黙を検知しました。自発的な発言を促します。")
+
+                # 連続して命令が重複投入されないよう、先にタイマーをリセットしておく
+                last_active_time = time.time()
+
+                # キャラクターに合わせたシステム命令（※お好みに応じて文言は調整してください）
+                instruction = "【システム】: しばらく配信のチャットが途切れて沈黙が続いています。退屈そうに独り言をつぶやくか、リスナーに生意気に話しかけてください。"
+                comment_queue.put(instruction)
+
 
 # --- CastCraftからの接続を処理する関数（強化版） ---
 def handle_client(conn, addr):
@@ -294,12 +331,14 @@ def handle_client(conn, addr):
         conn.close()
 
 
+# 各種スレッドの起動
 threading.Thread(target=audio_worker, daemon=True).start()
 threading.Thread(target=comment_worker, daemon=True).start()
 threading.Thread(target=console_input_worker, daemon=True).start()
+threading.Thread(target=silence_monitor_worker, daemon=True).start()  # 💡 監視スレッドを追加
 
 if __name__ == "__main__":
-    print(f"--- つみき v3.6 (文脈記憶対応版) 起動 ---")
+    print(f"--- つみき v3.6 (文脈記憶・沈黙監視対応版) 起動 ---")
     print(f"📡 ポート {TCP_PORT} で待ち受けつつ、キーボード入力も受付中...")
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
