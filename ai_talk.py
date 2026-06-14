@@ -17,7 +17,9 @@ load_dotenv()
 # --- 設定 ---
 DEEPINFRA_API_KEY = os.getenv("DEEPINFRA_API_KEY")
 DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
-DEEPINFRA_MODEL = "Qwen/Qwen2.5-72B-Instruct"
+# DEEPINFRA_MODEL = "Qwen/Qwen2.5-72B-Instruct"
+# DEEPINFRA_MODEL = "Qwen/Qwen3.6-27B"
+DEEPINFRA_MODEL = "deepseek-ai/DeepSeek-V4-Flash"
 VOICEVOX_URL = "http://localhost:50021"
 
 # CastCraftからの送信を受け取るポート

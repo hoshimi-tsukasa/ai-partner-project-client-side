@@ -1,0 +1,19 @@
+* abfeadd Grokを介した処理を廃止し、ローカル直接呼び出しに変更
+| * 06498ca fix: YouTubeコメント読み上げ処理を追加
+|/  
+| * 9389097 fix: 挨拶ルールを削除
+| * 4ff5392 feat: カジュアルな挨拶を返すルールを追加
+|/  
+* 4c591ea feat:入力に[ターミナル]と[チャット]タグを必須化し、チャット時は読み上げ
+* cbbeb29 feat: add greeting rules and enforce stricter tone rules in prompts
+* 173b916 feat: support [ターミナル] input tag in grok and system prompts
+* a6cb84f refactor: VOICEVOXの音声パラメータをファイル上部の定数に抽出
+* 21abc3e fix: つみきの冗長性を排除し「知的カミソリモード」へ移行。解説拒絶ロジックを実装
+* 031f3f5 fix: parameter adjustment to stop loop glitch
+* 825d7a7 feat: upgrade to v3.3 with response time logging and gitignore log files
+* 99f684d feat: synchronize Tsumiki (v2.4) and Grok prompts for enhanced intellectual dominance
+* 55d1562 feat: implement verbose logging for Grok and Llama to debug character drift (v3.2)
+* 5a929ec feat: update Tsumiki system prompt to v2.4 (high-intellect mode, unrestricted length)
+* fb08c23 initial commit
+* 337ba16 chore: .gitignoreの変更を反映（wav除外、log保存）
+* ab97d91 feat: つみき v3.1 究極パイプライン版の実装
