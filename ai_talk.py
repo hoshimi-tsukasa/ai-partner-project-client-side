@@ -40,7 +40,7 @@ comment_queue = queue.Queue()
 
 # 🧠 つみきの記憶用リスト（直近の文脈を保持）
 conversation_history = []
-MAX_HISTORY_LENGTH = 14  # 保持する最大発言数（14件＝約7往復分）
+MAX_HISTORY_LENGTH = 30  # 保持する最大発言数（14件＝約7往復分）
 
 
 def load_file(filepath, default_text=""):
