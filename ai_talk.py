@@ -148,7 +148,7 @@ def comment_worker():
         audio_queue.put((clean_text, 61))
         time.sleep(0.2)
 
-        print(f"📡 DeepInfra応答生成中...", end=" ", flush=True)
+        print(f"📡 AI応答生成中...", end=" ", flush=True)
         t_start = time.time()
 
         try:
