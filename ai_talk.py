@@ -149,9 +149,10 @@ def comment_worker():
             time.sleep(3.0)
             os._exit(0)
 
-        # ユーザーのコメントをそのまま音声キューへ投入
-        audio_queue.put((clean_text, 61))
-        time.sleep(0.2)
+        # 💡 【変更箇所】YouTubeチャットからの入力（ほしみ以外）の時だけ、コメントを読み上げる
+        if not is_hoshimi:
+            audio_queue.put((clean_text, 61))
+            time.sleep(0.2)
 
         print(f"📡 DeepInfra応答生成中(記憶数: {len(conversation_history)})...", end=" ", flush=True)
         t_start = time.time()
@@ -302,8 +303,7 @@ if __name__ == "__main__":
     print(f"--- つみき v3.6 (文脈記憶対応版) 起動 ---")
     print(f"📡 ポート {TCP_PORT} で待ち受けつつ、キーボード入力も受付中...")
 
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server = socket.socket(socket.AF_INET, socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     try:
         server.bind((TCP_HOST, TCP_PORT))
