@@ -22,6 +22,8 @@ DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
 DEEPINFRA_MODEL = "deepseek-ai/DeepSeek-V4-Flash"
 VOICEVOX_URL = "http://localhost:50021"
 
+SILENT_TIME = 300
+
 # CastCraftからの送信を受け取るポート
 TCP_HOST = "0.0.0.0"
 TCP_PORT = 50082
@@ -40,7 +42,7 @@ comment_queue = queue.Queue()
 
 # 🧠 つみきの記憶用リスト（直近の文脈を保持）
 conversation_history = []
-MAX_HISTORY_LENGTH = 30  # 保持する最大発言数（14件＝約7往復分）
+MAX_HISTORY_LENGTH = 100  # 保持する最大発言数（14件＝約7往復分）
 
 # ⏳ 沈黙監視用のタイマー変数（新規追加）
 last_active_time = time.time()
@@ -167,7 +169,7 @@ def comment_worker():
             audio_queue.put((clean_text, 61))
             time.sleep(0.2)
 
-        print(f"📡 DeepInfra応答生成中(記憶数: {len(conversation_history)})...", end=" ", flush=True)
+        print(f"📡 AI応答生成中(記憶数: {len(conversation_history)})...", end=" ", flush=True)
         t_start = time.time()
 
         try:
@@ -260,7 +262,7 @@ def silence_monitor_worker():
         time.sleep(1)  # 1秒ごとにタイマーをチェック
 
         # 最後に何かしらの発言・入力があってから30秒以上経過したか判定
-        if time.time() - last_active_time >= 30:
+        if time.time() - last_active_time >= SILENT_TIME:
             # AIが現在応答処理中でなく、かつ音声再生中でもない場合のみ実行
             if comment_queue.empty() and audio_queue.empty():
                 print("\n⏳ 30秒間の沈黙を検知しました。新しい話題の切り出しを促します。")
