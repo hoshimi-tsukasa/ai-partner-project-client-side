@@ -22,6 +22,7 @@ DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
 DEEPINFRA_MODEL = "deepseek-ai/DeepSeek-V4-Flash"
 VOICEVOX_URL = "http://localhost:50021"
 
+# 💡 必要に応じて沈黙とみなす秒数を調整してください（現状は300秒＝5分）
 SILENT_TIME = 300
 
 # CastCraftからの送信を受け取るポート
@@ -44,7 +45,7 @@ comment_queue = queue.Queue()
 conversation_history = []
 MAX_HISTORY_LENGTH = 100  # 保持する最大発言数（14件＝約7往復分）
 
-# ⏳ 沈黙監視用のタイマー変数（新規追加）
+# ⏳ 沈黙監視用のタイマー変数
 last_active_time = time.time()
 
 
@@ -55,7 +56,7 @@ def load_file(filepath, default_text=""):
         return f.read().strip()
 
 
-# --- スレッド1: 音声再生ワーカー（クリーン版） ---
+# --- スレッド1: 音声再生ワーカー ---
 def audio_worker():
     while True:
         item = audio_queue.get()
@@ -115,7 +116,7 @@ def audio_worker():
 
 # --- スレッド2: AI応答生成ワーカー ---
 def comment_worker():
-    global conversation_history, last_active_time  # 💡 last_active_time を追加
+    global conversation_history, last_active_time
     base_system_prompt = load_file("system_prompt.txt", "あなたは生意気な少女AIです。")
 
     system_prompt = (
@@ -132,20 +133,19 @@ def comment_worker():
             break
         comment_text = item
 
-        # 💡 入力があったためタイマーを即座にリセット
+        # 入力があったためタイマーを即座にリセット
         last_active_time = time.time()
 
-        # AI用のタグを剥ぎ取った、表示・読み上げ用のクリーンなテキストを作る
         clean_text = comment_text
         is_hoshimi = False
-        is_system = False  # 💡 システムからの自動催促判定用のフラグを追加
+        is_system = False
 
         if comment_text.startswith("【ほしみ】: "):
             clean_text = comment_text.replace("【ほしみ】: ", "", 1)
             is_hoshimi = True
         elif comment_text.startswith("【チャット】: "):
             clean_text = comment_text.replace("【チャット】: ", "", 1)
-        elif comment_text.startswith("【システム】: "):  # 💡 システム命令の検知を追加
+        elif comment_text.startswith("【システム】: "):
             clean_text = comment_text.replace("【システム】: ", "", 1)
             is_system = True
 
@@ -164,7 +164,7 @@ def comment_worker():
             time.sleep(3.0)
             os._exit(0)
 
-        # 💡 【変更箇所】YouTubeチャットからの入力（ほしみ・システム以外）の時だけ、コメントを読み上げる
+        # YouTubeチャットからの入力（ほしみ・システム以外）の時だけ、コメントを読み上げる
         if not is_hoshimi and not is_system:
             audio_queue.put((clean_text, 61))
             time.sleep(0.2)
@@ -173,13 +173,8 @@ def comment_worker():
         t_start = time.time()
 
         try:
-            # 🧠 1. システムプロンプトから始まるメッセージの土台を作る
             api_messages = [{"role": "system", "content": system_prompt}]
-
-            # 🧠 2. これまでの会話履歴（記憶）を挟み込む
             api_messages.extend(conversation_history)
-
-            # 🧠 3. 最後に今回の新しいコメントを追加する
             api_messages.append({"role": "user", "content": comment_text})
 
             deepinfra_res = client.chat.completions.create(
@@ -209,15 +204,12 @@ def comment_worker():
                 print(f"💖 つみき: {response_text}")
                 audio_queue.put((response_text, 感情ID))
 
-                # 💡 AIが話し終わったタイミングで再度タイマーをリセット（自身の発言から30秒を数えるため）
+                # AIが話し終わったタイミングで再度タイマーをリセット
                 last_active_time = time.time()
 
-                # 🧠 4. 今回のやり取りを新しい記憶としてストックに追加
                 conversation_history.append({"role": "user", "content": comment_text})
-                # ※JSONフォーマットを維持させるため、AIの生出力（JSON文字列）のまま記憶させます
                 conversation_history.append({"role": "assistant", "content": raw_content})
 
-                # 🧠 5. 記憶が溢れたら、古いもの（先頭）から削除する
                 if len(conversation_history) > MAX_HISTORY_LENGTH:
                     conversation_history = conversation_history[-MAX_HISTORY_LENGTH:]
             else:
@@ -255,35 +247,35 @@ def console_input_worker():
             time.sleep(1)
 
 
-# --- スレッド4: 沈黙監視ワーカー（修正版） ---
+# --- スレッド4: 沈黙監視ワーカー（★ここを改修） ---
 def silence_monitor_worker():
     global last_active_time
     while True:
         time.sleep(1)  # 1秒ごとにタイマーをチェック
 
-        # 最後に何かしらの発言・入力があってから30秒以上経過したか判定
+        # 最後に何かしらの発言・入力があってから指定秒数以上経過したか判定
         if time.time() - last_active_time >= SILENT_TIME:
             # AIが現在応答処理中でなく、かつ音声再生中でもない場合のみ実行
             if comment_queue.empty() and audio_queue.empty():
-                print("\n⏳ 30秒間の沈黙を検知しました。新しい話題の切り出しを促します。")
+                print(f"\n⏳ {SILENT_TIME}秒間の沈黙を検知しました。同じ話題の継続・深掘りを促します。")
 
                 # 連続して命令が重複投入されないよう、先にタイマーをリセットしておく
                 last_active_time = time.time()
 
-                # 💡 沈黙への言及を禁止し、新しい話題を振らせる指示に変更
+                # 💡 話題を変えさせず、文脈を引き継いで深掘り・問いかけをさせる指示に変更
                 instruction = (
-                    "【システム】: チャットの区切りが良いので、あなたから完全に新しい話題を切り出してください。\n"
+                    "【システム】: チャットの反応が途切れていますが、話題を変えずに【これまでの会話の流れやテーマ】をそのまま引き継いでください。\n"
+                    "直前の話題について、さらに深掘りしたあなたの見解を述べたり、リスナーに対して別の角度からの問いかけや無茶振りを投げかけて、同じテーマの会話を継続させてください。\n"
                     "⚠️注意：『静かだね』『誰も喋らない』『沈黙』など、チャットが止まっている状況への言及は【絶対に禁止】します。\n"
-                    "何事もなかったかのように、最近あなたが気になっていること、リスナーへの唐突な質問や無茶振り、"
-                    "またはあなたらしい生意気な雑談のネタを自発的に始めてください。"
+                    "会話が自然に途切れなく続いているかのように、あなたらしい生意気で知的な言葉を自発的に重ねてください。"
                 )
                 comment_queue.put(instruction)
 
-# --- CastCraftからの接続を処理する関数（強化版） ---
+
+# --- CastCraftからの接続を処理する関数 ---
 def handle_client(conn, addr):
     try:
         while True:
-            # 💡 対策①: 15バイトのヘッダーが確実に溜まるまでループして受信する
             header = b""
             while len(header) < 15:
                 packet = conn.recv(15 - len(header))
@@ -291,13 +283,11 @@ def handle_client(conn, addr):
                     break
                 header += packet
 
-            # それでも15バイトに満たない場合は通信終了
             if len(header) < 15:
                 break
 
             command, speed, pitch, volume, voice, encoding, length = struct.unpack('<hhhhhBi', header)
 
-            # 本文の受信（ここは元々綺麗にループ処理されています）
             text_bytes = b""
             while len(text_bytes) < length:
                 packet = conn.recv(length - len(text_bytes))
@@ -305,7 +295,6 @@ def handle_client(conn, addr):
                     break
                 text_bytes += packet
 
-            # デコード処理
             if encoding == 0:
                 raw_text = text_bytes.decode('utf-8', errors='ignore').strip()
             elif encoding == 1:
@@ -316,12 +305,9 @@ def handle_client(conn, addr):
             if raw_text:
                 comment_text = raw_text
 
-                # 💡 対策②: CastCraftの「ユーザー名:本文」形式の時だけ安全に切り分ける
-                # 本文にURL(https://)が含まれている場合は、コロン分割をスキップする安全策
                 if "http" not in raw_text:
                     if ":" in raw_text:
                         parts = raw_text.split(":", 1)
-                        # コロンの後ろに文字がある場合のみ採用
                         if len(parts) > 1 and parts[1].strip():
                             comment_text = parts[1].strip()
                     elif "：" in raw_text:
@@ -341,7 +327,7 @@ def handle_client(conn, addr):
 threading.Thread(target=audio_worker, daemon=True).start()
 threading.Thread(target=comment_worker, daemon=True).start()
 threading.Thread(target=console_input_worker, daemon=True).start()
-threading.Thread(target=silence_monitor_worker, daemon=True).start()  # 💡 監視スレッドを追加
+threading.Thread(target=silence_monitor_worker, daemon=True).start()
 
 if __name__ == "__main__":
     print(f"--- つみき v3.6 (文脈記憶・沈黙監視対応版) 起動 ---")
